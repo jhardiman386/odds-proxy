@@ -15,48 +15,58 @@ const SPORTS = [
 
 export const handler = async () => {
   const now = new Date().toISOString();
-  console.log(`🕒 Scheduler started at ${now}`);
+  console.log(`🕒 Scheduler maintenance started at ${now}`);
 
   const results = [];
 
   try {
     for (const sport of SPORTS) {
-      const syncUrl = `${BASE_URL}/router?operation=syncRoster&sport=${sport}`;
       console.log(`🔁 Syncing roster for ${sport}...`);
+      const rosterUrl = `${BASE_URL}/router?operation=syncRoster&sport=${sport}`;
+      const rosterRes = await fetch(rosterUrl);
+      const rosterText = await rosterRes.text();
+      results.push({
+        type: "roster",
+        sport,
+        status: rosterRes.ok ? "success" : "error",
+        details: rosterText.slice(0, 100),
+      });
 
-      try {
-        const res = await fetch(syncUrl);
-        const data = await res.text();
-        results.push({ sport, result: "success", details: data.slice(0, 100) });
-      } catch (err) {
-        results.push({ sport, result: "error", details: err.message });
-      }
+      console.log(`📊 Pre-caching odds for ${sport}...`);
+      const oddsUrl = `${BASE_URL}/router?operation=getOdds&sport=${sport}&regions=us,us2&bookmakers=draftkings,fanduel&markets=all&oddsFormat=american`;
+      const oddsRes = await fetch(oddsUrl);
+      const oddsText = await oddsRes.text();
+      results.push({
+        type: "odds",
+        sport,
+        status: oddsRes.ok ? "success" : "error",
+        details: oddsText.slice(0, 100),
+      });
     }
 
-    // Trigger router purge (runs auto-purge logic)
+    // Trigger router purge (runs auto-purge internally)
     console.log("🧹 Triggering cache purge...");
     const purgeUrl = `${BASE_URL}/router?operation=getRosterStatus`;
     await fetch(purgeUrl);
 
-    console.log("✅ Scheduler maintenance completed successfully.");
-
+    console.log("✅ Full maintenance cycle completed successfully.");
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: "✅ All rosters synced + cache refreshed.",
+        message: "✅ All rosters and odds synced + cache refreshed.",
         timestamp: now,
-        results
+        results,
       }),
     };
   } catch (err) {
-    console.error("❌ Scheduler failed:", err);
+    console.error("❌ Scheduler failure:", err);
     return {
       statusCode: 500,
       body: JSON.stringify({
         error: "Scheduler run failed.",
         details: err.message,
         timestamp: now,
-        results
+        results,
       }),
     };
   }
