@@ -17,7 +17,9 @@
 # Existing 12-hour roster refresh job (optional legacy)
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
+  function = "router"
 
-# New unified maintenance scheduler (rosters + odds pre-cache)
+# New unified maintenance scheduler (rosters + odds + props pre-cache)
 [scheduled."scheduler"]
   cron = "0 */6 * * *"
+  function = "router"
