@@ -27,10 +27,13 @@ exports.handler = async function (event) {
     };
   }
 
-  const url = `https://api.sportsdata.io/v3/${endpoint}?key=${API_KEY}`;
+  const url = `https://api.sportsdata.io/v3/${endpoint}`;
 
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: { "Ocp-Apim-Subscription-Key": API_KEY },
+    });
+
     if (!res.ok) throw new Error(`Upstream ${res.status}`);
     const data = await res.json();
 
@@ -49,7 +52,7 @@ exports.handler = async function (event) {
       body: JSON.stringify({
         error: "Roster sync failed",
         details: err.message,
-        attempted_url: url
+        attempted_url: url,
       }),
     };
   }
