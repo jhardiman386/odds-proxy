@@ -1,0 +1,15 @@
+# netlify.toml
+# -------------------------------
+# ⚙️ Global Build Settings
+[build]
+  functions = "netlify/functions"
+  publish = "dist"  # or wherever your front-end files go (if any)
+
+# 🧩 Function Configuration
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["netlify/functions/**"]
+
+# ⏱️ Scheduled Function: Roster Auto-Refresh
+[scheduled."roster-refresh"]
+  cron = "0 */12 * * *"  # Every 12 hours UTC
