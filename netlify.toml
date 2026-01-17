@@ -1,23 +1,23 @@
-# ==============================
-# 📦 Build Configuration
-# ==============================
+# ============================================================
+# 🧱 Build Configuration
+# ============================================================
 [build]
   functions = "netlify/functions"
 
-# ==============================
+# ============================================================
 # ⚙️ Function Bundling
-# ==============================
+# ============================================================
 [functions]
   node_bundler = "esbuild"
 
-# ==============================
-# ⏱ Scheduled Jobs
-# ==============================
+# ============================================================
+# 🕒 Scheduled Jobs
+# ============================================================
 
-# Existing 12-hour roster refresh job
+# Existing 12-hour roster refresh job (optional legacy)
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
 
-# New unified maintenance scheduler (rosters + purge)
-[functions."scheduler"]
-  schedule = "0 */6 * * *"
+# New unified maintenance scheduler (rosters + odds pre-cache)
+[scheduled."scheduler"]
+  cron = "0 */6 * * *"
