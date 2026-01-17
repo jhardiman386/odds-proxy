@@ -1,7 +1,7 @@
 // ======================================================
-// 🧠 Sports Data Proxy Router v3.3 (Patched Jan 2026)
+// 🧠 Sports Data Proxy Router v3.4 (Patched Jan 2026)
 // Unified Odds + Player Props + Roster Management
-// with Caching + Scheduled Auto-Refresh
+// with Caching + Scheduled Auto-Refresh + Status Check
 // ======================================================
 
 import fetch from "node-fetch";
@@ -150,7 +150,7 @@ export const handler = async (event) => {
   // 🧠 3. ROSTER SYNC (Patched for v3→v4 API Migration)
   // ======================================================
   if (operation === "syncRoster") {
-    // Attempt the newer v4 endpoint first, then fall back to v3 legacy
+    // Try v4 first, then fallback to v3
     const v4url = `https://api.sportsdata.io/v4/nfl/players?key=${SPORTS_API_KEY}`;
     const v3url = `https://api.sportsdata.io/v3/${sport}/scores/json/Players?key=${SPORTS_API_KEY}`;
 
@@ -187,7 +187,28 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // 🔁 4. AUTO-REFRESH HOOK (for scheduler)
+  // 📋 4. ROSTER STATUS CHECK (NEW ADDITION)
+  // ======================================================
+  if (operation === "getRosterStatus") {
+    const rosterKey = `${sport}_roster`;
+    const roster = cache[rosterKey] || [];
+    const lastSync = timestamps[rosterKey] || "No sync yet";
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: `📊 Roster status for ${sport}`,
+        cached: !!cache[rosterKey],
+        active_count: roster.length || 0,
+        last_sync: lastSync,
+        hint:
+          "If data older than 12h, call operation=syncRoster to refresh from live API.",
+      }),
+    };
+  }
+
+  // ======================================================
+  // 🔁 5. AUTO-REFRESH HOOK (for scheduler)
   // ======================================================
   if (operation === "refreshAll") {
     console.log("🕒 Running unified refresh cycle...");
@@ -212,7 +233,7 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // ❌ 5. INVALID OPERATION
+  // ❌ 6. INVALID OPERATION
   // ======================================================
   return {
     statusCode: 400,
