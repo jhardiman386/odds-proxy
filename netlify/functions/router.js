@@ -1,7 +1,8 @@
+
 // ======================================================
-// 🧠 Sports Data Proxy Router v3.4 (Patched Jan 2026)
+// ⚙️ router_v3.6.2.js
 // Unified Odds + Player Props + Roster Management
-// with Caching + Scheduled Auto-Refresh + Status Check
+// Includes Sport Key Mapping + Safer Fetch + Auto-Cache
 // ======================================================
 
 import fetch from "node-fetch";
@@ -21,11 +22,11 @@ async function safeFetch(url, retries = 3) {
     try {
       const res = await fetch(url);
       if (res.ok) return await res.json();
-      console.warn(`[Attempt ${attempt}] Failed (${res.status})`);
+      console.warn(`[Attempt ${attempt}] Failed (${res.status}) for ${url}`);
     } catch (err) {
       console.warn(`[Attempt ${attempt}] Error: ${err.message}`);
     }
-    await new Promise((r) => setTimeout(r, 1000 * attempt));
+    await new Promise(r => setTimeout(r, 1000 * attempt));
   }
   return null;
 }
@@ -37,6 +38,17 @@ function saveCache(key, data) {
   cache[key] = data;
   timestamps[key] = new Date().toISOString();
 }
+
+// --------------------------------------------
+// 🧩 Sport Key Mapper (Fixes 404/401 on roster sync)
+// --------------------------------------------
+const sportMap = {
+  americanfootball_nfl: "nfl",
+  basketball_nba: "nba",
+  icehockey_nhl: "nhl",
+  baseball_mlb: "mlb",
+  soccer_epl: "soccer",
+};
 
 // --------------------------------------------
 // Main Handler
@@ -53,8 +65,7 @@ export const handler = async (event) => {
       statusCode: 500,
       body: JSON.stringify({
         error: "Missing API keys",
-        details:
-          "Set ODDS_API_KEY and SPORTSDATAIO_KEY in your environment variables.",
+        details: "Set ODDS_API_KEY and SPORTSDATAIO_KEY in your environment variables.",
       }),
     };
   }
@@ -147,21 +158,12 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // 🧠 3. ROSTER SYNC (Patched for v3→v4 API Migration)
+  // 🧠 3. ROSTER SYNC (ALL SPORTS) — FIXED ENDPOINT
   // ======================================================
   if (operation === "syncRoster") {
-    // Try v4 first, then fallback to v3
-    const v4url = `https://api.sportsdata.io/v4/nfl/players?key=${SPORTS_API_KEY}`;
-    const v3url = `https://api.sportsdata.io/v3/${sport}/scores/json/Players?key=${SPORTS_API_KEY}`;
-
-    let data = await safeFetch(v4url);
-    let source = "v4";
-
-    if (!data) {
-      console.warn("⚠️ v4 endpoint unavailable, retrying legacy v3...");
-      data = await safeFetch(v3url);
-      source = "v3";
-    }
+    const apiSport = sportMap[sport] || sport;
+    const url = `https://api.sportsdata.io/v3/${apiSport}/scores/json/Players?key=${SPORTS_API_KEY}`;
+    const data = await safeFetch(url);
 
     if (!data) {
       return {
@@ -174,12 +176,12 @@ export const handler = async (event) => {
     }
 
     saveCache(`${sport}_roster`, data);
-    console.log(`✅ ${sport.toUpperCase()} roster synced (${data.length} active) via ${source}`);
+    console.log(`✅ ${sport.toUpperCase()} roster synced (${data.length} active)`);
 
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: `✅ ${sport.toUpperCase()} roster synced successfully via ${source}.`,
+        message: `✅ ${sport.toUpperCase()} roster synced successfully.`,
         active_count: data.length,
         timestamp: timestamps[`${sport}_roster`],
       }),
@@ -187,36 +189,16 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // 📋 4. ROSTER STATUS CHECK (NEW ADDITION)
-  // ======================================================
-  if (operation === "getRosterStatus") {
-    const rosterKey = `${sport}_roster`;
-    const roster = cache[rosterKey] || [];
-    const lastSync = timestamps[rosterKey] || "No sync yet";
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        message: `📊 Roster status for ${sport}`,
-        cached: !!cache[rosterKey],
-        active_count: roster.length || 0,
-        last_sync: lastSync,
-        hint:
-          "If data older than 12h, call operation=syncRoster to refresh from live API.",
-      }),
-    };
-  }
-
-  // ======================================================
-  // 🔁 5. AUTO-REFRESH HOOK (for scheduler)
+  // 🔁 4. AUTO-REFRESH HOOK (for scheduler)
   // ======================================================
   if (operation === "refreshAll") {
     console.log("🕒 Running unified refresh cycle...");
     const sports = ["americanfootball_nfl", "basketball_nba", "icehockey_nhl"];
 
     for (const s of sports) {
+      const apiSport = sportMap[s] || s;
       await safeFetch(
-        `https://api.sportsdata.io/v4/nfl/players?key=${SPORTS_API_KEY}`
+        `https://api.sportsdata.io/v3/${apiSport}/scores/json/Players?key=${SPORTS_API_KEY}`
       );
       await safeFetch(
         `https://api.the-odds-api.com/v4/sports/${s}/odds?regions=us,us2&markets=h2h,spreads,totals&bookmakers=draftkings&apiKey=${ODDS_API_KEY}`
@@ -233,7 +215,7 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // ❌ 6. INVALID OPERATION
+  // ❌ 5. INVALID OPERATION HANDLER
   // ======================================================
   return {
     statusCode: 400,
