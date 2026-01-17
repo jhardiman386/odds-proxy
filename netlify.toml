@@ -4,5 +4,6 @@
 [functions]
   node_bundler = "esbuild"
 
+# ⏱ Scheduled run every 12 hours
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
