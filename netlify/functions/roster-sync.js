@@ -9,7 +9,7 @@ exports.handler = async function (event) {
     ncaab: "cbb/scores/json/Players",
     pga: "golf/scores/json/Players",
     ufc: "mma/scores/json/Fighters",
-    soccer: "soccer/scores/json/Players",
+    soccer: "soccer/scores/json/Players"
   };
 
   if (!API_KEY) {
@@ -19,14 +19,15 @@ exports.handler = async function (event) {
     };
   }
 
-  if (!sportEndpoints[sport]) {
+  const endpoint = sportEndpoints[sport];
+  if (!endpoint) {
     return {
       statusCode: 400,
       body: JSON.stringify({ error: `Invalid sport: ${sport}` }),
     };
   }
 
-  const url = `https://api.sportsdata.io/v4/${sportEndpoints[sport]}?key=${API_KEY}`;
+  const url = `https://api.sportsdata.io/v3/${endpoint}?key=${API_KEY}`;
 
   try {
     const res = await fetch(url);
@@ -45,7 +46,11 @@ exports.handler = async function (event) {
     console.error("Roster Sync Error:", err);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: "Roster sync failed", details: err.message }),
+      body: JSON.stringify({
+        error: "Roster sync failed",
+        details: err.message,
+        attempted_url: url
+      }),
     };
   }
 };
