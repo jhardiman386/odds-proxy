@@ -1,5 +1,5 @@
 // ======================================================
-// 🧠 Sports Data Proxy Router v3.2
+// 🧠 Sports Data Proxy Router v3.3 (Patched Jan 2026)
 // Unified Odds + Player Props + Roster Management
 // with Caching + Scheduled Auto-Refresh
 // ======================================================
@@ -25,7 +25,7 @@ async function safeFetch(url, retries = 3) {
     } catch (err) {
       console.warn(`[Attempt ${attempt}] Error: ${err.message}`);
     }
-    await new Promise(r => setTimeout(r, 1000 * attempt));
+    await new Promise((r) => setTimeout(r, 1000 * attempt));
   }
   return null;
 }
@@ -53,7 +53,8 @@ export const handler = async (event) => {
       statusCode: 500,
       body: JSON.stringify({
         error: "Missing API keys",
-        details: "Set ODDS_API_KEY and SPORTSDATAIO_KEY in your environment variables.",
+        details:
+          "Set ODDS_API_KEY and SPORTSDATAIO_KEY in your environment variables.",
       }),
     };
   }
@@ -146,26 +147,39 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // 🧠 3. ROSTER SYNC (ALL SPORTS)
+  // 🧠 3. ROSTER SYNC (Patched for v3→v4 API Migration)
   // ======================================================
   if (operation === "syncRoster") {
-    const url = `https://api.sportsdata.io/v3/${sport}/scores/json/Players?key=${SPORTS_API_KEY}`;
-    const data = await safeFetch(url);
+    // Attempt the newer v4 endpoint first, then fall back to v3 legacy
+    const v4url = `https://api.sportsdata.io/v4/nfl/players?key=${SPORTS_API_KEY}`;
+    const v3url = `https://api.sportsdata.io/v3/${sport}/scores/json/Players?key=${SPORTS_API_KEY}`;
+
+    let data = await safeFetch(v4url);
+    let source = "v4";
+
+    if (!data) {
+      console.warn("⚠️ v4 endpoint unavailable, retrying legacy v3...");
+      data = await safeFetch(v3url);
+      source = "v3";
+    }
 
     if (!data) {
       return {
         statusCode: 502,
-        body: JSON.stringify({ error: "Roster sync failed", details: "Upstream 404/401" }),
+        body: JSON.stringify({
+          error: "Roster sync failed",
+          details: "Upstream 404/401 on both v3 and v4 endpoints",
+        }),
       };
     }
 
     saveCache(`${sport}_roster`, data);
-    console.log(`✅ ${sport.toUpperCase()} roster synced (${data.length} active)`);
+    console.log(`✅ ${sport.toUpperCase()} roster synced (${data.length} active) via ${source}`);
 
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: `✅ ${sport.toUpperCase()} roster synced successfully.`,
+        message: `✅ ${sport.toUpperCase()} roster synced successfully via ${source}.`,
         active_count: data.length,
         timestamp: timestamps[`${sport}_roster`],
       }),
@@ -181,7 +195,7 @@ export const handler = async (event) => {
 
     for (const s of sports) {
       await safeFetch(
-        `https://api.sportsdata.io/v3/${s}/scores/json/Players?key=${SPORTS_API_KEY}`
+        `https://api.sportsdata.io/v4/nfl/players?key=${SPORTS_API_KEY}`
       );
       await safeFetch(
         `https://api.the-odds-api.com/v4/sports/${s}/odds?regions=us,us2&markets=h2h,spreads,totals&bookmakers=draftkings&apiKey=${ODDS_API_KEY}`
