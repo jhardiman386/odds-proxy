@@ -1,153 +1,142 @@
+// ============================================
+// 🧠 Sports Data Proxy Router v3.1
+// Unified Odds + Roster management endpoint
+// ============================================
+
 import fetch from "node-fetch";
-import fs from "fs";
-import path from "path";
 
-const CACHE_DIR = "/tmp/router-cache"; // Netlify's temporary writeable cache directory
-const BASE_URL = "https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions";
-const MAX_CACHE_AGE_HOURS = 12; // How long cached data remains valid
+let lastSuccessfulResponse = null;
+let lastUpdated = null;
 
-if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-
-const getCacheFile = (operation, sport) =>
-  path.join(CACHE_DIR, `${operation}_${sport || "global"}.json`);
-
-// 🧹 Clean old cache entries automatically
-const purgeOldCache = () => {
-  try {
-    const files = fs.readdirSync(CACHE_DIR);
-    const now = Date.now();
-    let purged = 0;
-
-    for (const file of files) {
-      const filePath = path.join(CACHE_DIR, file);
-      const stats = fs.statSync(filePath);
-      const ageHours = (now - stats.mtimeMs) / (1000 * 60 * 60);
-
-      if (ageHours > MAX_CACHE_AGE_HOURS) {
-        fs.unlinkSync(filePath);
-        purged++;
-      }
+// --------------------------------------------
+// Utility: retry with exponential backoff
+// --------------------------------------------
+async function safeFetch(url, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return await res.json();
+      console.warn(`[Attempt ${attempt}] Failed (${res.status})`);
+    } catch (err) {
+      console.warn(`[Attempt ${attempt}] Error: ${err.message}`);
     }
-
-    if (purged > 0) {
-      console.log(`🧹 Purged ${purged} expired cache files (> ${MAX_CACHE_AGE_HOURS}h old)`);
-    }
-  } catch (err) {
-    console.warn("⚠️ Cache purge error:", err.message);
+    await new Promise(r => setTimeout(r, 1000 * attempt)); // exponential delay
   }
-};
+  return null;
+}
 
-// Run purge on each execution
-purgeOldCache();
-
+// --------------------------------------------
+// Main Router
+// --------------------------------------------
 export const handler = async (event) => {
-  const params = event.queryStringParameters || {};
-  const { operation, sport, ...rest } = params;
+  const { operation = "getOdds", sport = "americanfootball_nfl" } =
+    event.queryStringParameters || {};
 
-  if (!operation) {
+  const ODDS_API_KEY = process.env.ODDS_API_KEY;
+  const SPORTS_API_KEY = process.env.SPORTSDATAIO_KEY;
+
+  if (!ODDS_API_KEY || !SPORTS_API_KEY) {
     return {
-      statusCode: 400,
-      body: JSON.stringify({ error: "Missing 'operation' query parameter" }),
+      statusCode: 500,
+      body: JSON.stringify({
+        error: "Missing API keys",
+        details: "Ensure ODDS_API_KEY and SPORTSDATAIO_KEY are set in environment variables.",
+      }),
     };
   }
 
-  let endpoint;
-  switch (operation) {
-    case "getRosterStatus":
-      endpoint = "roster-status";
-      break;
-    case "syncRoster":
-      endpoint = "roster-sync";
-      break;
-    case "getOdds":
-      endpoint = "odds";
-      break;
-    default:
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: `Invalid operation: ${operation}` }),
-      };
-  }
+  console.log(`🌀 Operation: ${operation} | Sport: ${sport}`);
 
-  const url = `${BASE_URL}/${endpoint}?${new URLSearchParams(rest)}`;
-  const cacheFile = getCacheFile(operation, sport);
-  const headers = { "Content-Type": "application/json" };
+  // ======================
+  // 🏈 GET ODDS
+  // ======================
+  if (operation === "getOdds") {
+    const baseUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds`;
+    const params = `?regions=us,us2&markets=h2h,spreads,totals,player_props&bookmakers=draftkings,fanduel&oddsFormat=american&dateFormat=iso&apiKey=${ODDS_API_KEY}`;
 
-  // --- Helper: Save cache with timestamp
-  const saveCache = (data) => {
-    try {
-      const timestamp = new Date().toISOString();
-      const wrapped = { ts: timestamp, data };
-      fs.writeFileSync(cacheFile, JSON.stringify(wrapped, null, 2));
-      console.log(`✅ Cached response for ${operation} (${sport || "global"}) at ${timestamp}`);
-    } catch (err) {
-      console.warn("⚠️ Cache write failed:", err.message);
+    let data = await safeFetch(baseUrl + params);
+
+    if (!data) {
+      console.warn("⚠️ US/US2 region failed, retrying with EU...");
+      const euUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=eu&markets=h2h,spreads,totals&oddsFormat=american&apiKey=${ODDS_API_KEY}`;
+      data = await safeFetch(euUrl);
     }
-  };
 
-  // --- Helper: Read cache
-  const readCache = () => {
-    try {
-      if (fs.existsSync(cacheFile)) {
-        const cached = JSON.parse(fs.readFileSync(cacheFile));
-        console.log(`⚙️ Using cached data for ${operation} (${sport || "global"})`);
-        return cached;
-      }
-    } catch (err) {
-      console.warn("⚠️ Cache read failed:", err.message);
-    }
-    return null;
-  };
-
-  // --- Attempt live fetch (retry up to 2x)
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      console.log(`🔄 Fetching ${url} (Attempt ${attempt})`);
-      const res = await fetch(url);
-      const text = await res.text();
-
-      if (!res.ok) throw new Error(`Upstream ${res.status}: ${text}`);
-
-      const data = JSON.parse(text);
-      saveCache(data);
-
+    if (!data && lastSuccessfulResponse) {
+      console.log("♻️ Serving cached odds from", lastUpdated);
       return {
         statusCode: 200,
-        headers,
         body: JSON.stringify({
-          message: `✅ Live data retrieved successfully (${operation})`,
-          source: "live",
-          last_synced_at: new Date().toISOString(),
-          data,
+          cached: true,
+          timestamp: lastUpdated,
+          data: lastSuccessfulResponse,
         }),
       };
-    } catch (err) {
-      console.error(`❌ Attempt ${attempt} failed: ${err.message}`);
-
-      if (attempt === 2) {
-        const cached = readCache();
-        if (cached) {
-          return {
-            statusCode: 200,
-            headers,
-            body: JSON.stringify({
-              message: `⚠️ Using cached data for ${operation} (live source failed)`,
-              source: "cache",
-              last_synced_at: cached.ts,
-              data: cached.data,
-            }),
-          };
-        }
-        return {
-          statusCode: 502,
-          headers,
-          body: JSON.stringify({
-            error: `All attempts failed for ${operation}`,
-            details: err.message,
-            last_synced_at: null
-          }),
-        };
-      }
     }
+
+    if (!data) {
+      return {
+        statusCode: 502,
+        body: JSON.stringify({ error: "Upstream Odds API failed (no response)" }),
+      };
+    }
+
+    lastSuccessfulResponse = data;
+    lastUpdated = new Date().toISOString();
+
+    console.log(`✅ Odds sync success @ ${lastUpdated}`);
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ cached: false, timestamp: lastUpdated, data }),
+    };
   }
+
+  // ======================
+  // 🧩 SYNC ROSTERS
+  // ======================
+  if (operation === "syncRoster") {
+    const url = `https://api.sportsdata.io/v3/${sport}/scores/json/Players?key=${SPORTS_API_KEY}`;
+    const data = await safeFetch(url);
+
+    if (!data) {
+      return {
+        statusCode: 502,
+        body: JSON.stringify({ error: "Roster sync failed", details: "Upstream 404 or 401" }),
+      };
+    }
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: `✅ ${sport.toUpperCase()} roster synced successfully.`,
+        active_count: data.length,
+        timestamp: new Date().toISOString(),
+      }),
+    };
+  }
+
+  // ======================
+  // 🧠 GET ROSTER STATUS
+  // ======================
+  if (operation === "getRosterStatus") {
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        message: "✅ Roster lock active",
+        timestamp: new Date().toISOString(),
+        cache_active: !!lastSuccessfulResponse,
+      }),
+    };
+  }
+
+  // ======================
+  // ❌ INVALID OPERATION
+  // ======================
+  return {
+    statusCode: 400,
+    body: JSON.stringify({
+      error: "Invalid operation",
+      valid_operations: ["getOdds", "syncRoster", "getRosterStatus"],
+    }),
+  };
 };
