@@ -2,13 +2,43 @@ import fetch from "node-fetch";
 import fs from "fs";
 import path from "path";
 
-const CACHE_DIR = "/tmp/router-cache"; // Temp writable dir on Netlify
+const CACHE_DIR = "/tmp/router-cache"; // Netlify's temporary writeable cache directory
 const BASE_URL = "https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions";
+const MAX_CACHE_AGE_HOURS = 12; // How long cached data remains valid
 
 if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
 const getCacheFile = (operation, sport) =>
   path.join(CACHE_DIR, `${operation}_${sport || "global"}.json`);
+
+// 🧹 Clean old cache entries automatically
+const purgeOldCache = () => {
+  try {
+    const files = fs.readdirSync(CACHE_DIR);
+    const now = Date.now();
+    let purged = 0;
+
+    for (const file of files) {
+      const filePath = path.join(CACHE_DIR, file);
+      const stats = fs.statSync(filePath);
+      const ageHours = (now - stats.mtimeMs) / (1000 * 60 * 60);
+
+      if (ageHours > MAX_CACHE_AGE_HOURS) {
+        fs.unlinkSync(filePath);
+        purged++;
+      }
+    }
+
+    if (purged > 0) {
+      console.log(`🧹 Purged ${purged} expired cache files (> ${MAX_CACHE_AGE_HOURS}h old)`);
+    }
+  } catch (err) {
+    console.warn("⚠️ Cache purge error:", err.message);
+  }
+};
+
+// Run purge on each execution
+purgeOldCache();
 
 export const handler = async (event) => {
   const params = event.queryStringParameters || {};
@@ -114,7 +144,7 @@ export const handler = async (event) => {
           body: JSON.stringify({
             error: `All attempts failed for ${operation}`,
             details: err.message,
-            last_synced_at: null,
+            last_synced_at: null
           }),
         };
       }
