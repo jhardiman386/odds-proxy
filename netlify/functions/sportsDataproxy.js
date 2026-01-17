@@ -1,121 +1,70 @@
-{
-  "version": "3.6.1",
-  "description": "Unified Parlay Configuration – NFL Engine Integration with ATD-only Global Parlay Support and Roster Freshness Hooks (Jan 2026)",
+// ======================================================
+// 🧠 sportsDataproxy.js
+// Unified Data Proxy Handler – orchestrates calls to router
+// Includes roster freshness handshake (Jan 2026)
+// ======================================================
 
-  "defaults": {
-    "min_confidence": 0.58,
-    "min_grade": "B-",
-    "max_legs": 10,
-    "leg_counts": [3, 5, 7, 10],
-    "include_cross_sport": true,
-    "cross_sport_limit": 3,
-    "include_atd_in_parlays": true,
-    "include_props_in_parlays": true,
-    "include_atd_only_global": true,
-    "force_unique_games": true,
-    "avoid_high_correlation": true,
-    "max_same_team_legs": 2,
-    "grade_priority": ["A+", "A", "A-", "B+", "B", "B-"],
-    "confidence_weight": 0.6,
-    "edge_weight": 0.4,
-    "rounding_precision": 2,
-    "parlay_grade_threshold": "B-",
-    "market_priority_order": ["prop", "atd", "spread", "total", "moneyline"],
-    "include_odds": true,
-    "include_start_time": true,
-    "output_format": "mobile_friendly",
-    "auto_refresh_roster": true,
-    "roster_max_age_hours": 12
-  },
+import fetch from "node-fetch";
 
-  "modes": {
-    "single_game": {
-      "enabled": true,
-      "leg_counts": [3, 5, 7],
-      "allow_props": true,
-      "allow_atd": true,
-      "allow_cross_team_mix": false,
-      "selection_strategy": "confidence_then_edge",
-      "grade_cutoff": "B-"
-    },
+// --------------------------------------------
+// 🧩 ROSTER HANDSHAKE
+// --------------------------------------------
+async function getRosterStatus(sport = "americanfootball_nfl") {
+  const url = `https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions/router?operation=getRosterStatus&sport=${sport}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Roster status check failed (${res.status})`);
+  return await res.json();
+}
 
-    "cross_sport": {
-      "enabled": true,
-      "leg_counts": [3, 5, 7],
-      "max_per_run": 3,
-      "selection_strategy": "highest_combined_score",
-      "include_props": true,
-      "include_atd": true,
-      "include_top_games_only": true,
-      "max_games": 5,
-      "min_confidence": 0.6,
-      "min_grade": "B"
-    },
+async function syncRosterIfStale(sport = "americanfootball_nfl") {
+  const status = await getRosterStatus(sport);
+  console.log(`📊 Roster Check → ${status.active_count} players | Last Sync ${status.last_sync}`);
 
-    "global_atd_only": {
-      "enabled": true,
-      "leg_counts": [3, 5, 7],
-      "selection_strategy": "highest_td_probability",
-      "description": "Builds global 3/5/7-leg parlays using only highest-confidence anytime TD scorers across all games.",
-      "include_props": false,
-      "include_atd": true,
-      "confidence_threshold": 0.70,
-      "grade_cutoff": "B-"
-    },
-
-    "gpp_mode": {
-      "enabled": true,
-      "bias": "ceiling",
-      "min_confidence": 0.55,
-      "variance_tolerance": "high",
-      "include_props": true
-    },
-
-    "cash_mode": {
-      "enabled": true,
-      "bias": "floor",
-      "min_confidence": 0.65,
-      "variance_tolerance": "low",
-      "include_props": false
-    }
-  },
-
-  "build_rules": {
-    "leg_scoring_formula": "(confidence * 0.6) + (edge * 0.4)",
-    "exclude_if_conflict": true,
-    "avoid_opposite_legs": true,
-    "avoid_duplicate_markets": true,
-    "avoid_high_variance_props": true,
-    "allow_same_game_mix_for_props": true,
-    "allow_atd_plus_team_leg": true,
-    "prefer_overs_for_parlays": true,
-    "use_confidence_sorting": true,
-    "apply_volatility_dampening": true
-  },
-
-  "output_rules": {
-    "include_confidence": true,
-    "include_edge": true,
-    "include_grade": true,
-    "include_odds": true,
-    "show_expected_value": true,
-    "show_combined_confidence": true,
-    "display_mode": "mobile_friendly",
-    "include_game_info": true,
-    "show_start_times": true,
-    "show_team_context": true,
-    "expanded_spacing": true
-  },
-
-  "summary": {
-    "include_summary": true,
-    "sort_by": "confidence",
-    "include_top_parlays": 3,
-    "include_best_single_game_parlays": true,
-    "include_best_cross_sport_parlays": true,
-    "include_global_atd_parlays": true,
-    "show_average_confidence": true,
-    "show_average_edge": true,
-    "only_show_global_summary_if_multiple_games": true
+  let needsSync = false;
+  if (!status.cached || !status.last_sync) needsSync = true;
+  else {
+    const ageHours =
+      (Date.now() - new Date(status.last_sync).getTime()) / (1000 * 60 * 60);
+    if (ageHours > 12) needsSync = true;
   }
+
+  if (!needsSync) {
+    console.log(`✅ ${sport.toUpperCase()} roster fresh (<12h). Using cached data.`);
+    return status;
+  }
+
+  console.log(`⚙️ Roster stale → running live sync for ${sport} ...`);
+  const syncUrl = `https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions/router?operation=syncRoster&sport=${sport}`;
+  const res = await fetch(syncUrl);
+  if (!res.ok) throw new Error(`Roster sync failed (${res.status})`);
+  const syncResult = await res.json();
+  console.log(`✅ Roster refreshed @ ${syncResult.timestamp} (${syncResult.active_count} active)`);
+  return syncResult;
+}
+
+// --------------------------------------------
+// 🏈 SPORTS DATA PROXY WRAPPER
+// --------------------------------------------
+export async function sportsDataProxy({
+  operation = "getOdds",
+  sport = "americanfootball_nfl",
+  force = false,
+  regions = "us,us2",
+  markets = "h2h,spreads,totals,player_props",
+  bookmakers = "draftkings,fanduel",
+  oddsFormat = "american",
+  dateFormat = "iso"
+} = {}) {
+
+  if (operation === "getRosterStatus" || operation === "syncRoster") {
+    return await syncRosterIfStale(sport);
+  }
+
+  const url = `https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions/router?operation=${operation}&sport=${sport}&regions=${regions}&markets=${markets}&bookmakers=${bookmakers}&oddsFormat=${oddsFormat}&dateFormat=${dateFormat}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`sportsDataProxy failed (${res.status})`);
+  const data = await res.json();
+
+  console.log(`✅ ${operation} pulled successfully for ${sport}`);
+  return data;
 }
