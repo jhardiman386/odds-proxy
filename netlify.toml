@@ -1,9 +1,23 @@
+# ==============================
+# 📦 Build Configuration
+# ==============================
 [build]
   functions = "netlify/functions"
 
+# ==============================
+# ⚙️ Function Bundling
+# ==============================
 [functions]
   node_bundler = "esbuild"
 
-# ⏱ Scheduled run every 12 hours
+# ==============================
+# ⏱ Scheduled Jobs
+# ==============================
+
+# Existing 12-hour roster refresh job
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
+
+# New unified maintenance scheduler (rosters + purge)
+[functions."scheduler"]
+  schedule = "0 */12 * * *"
