@@ -1,40 +1,116 @@
+import fetch from "node-fetch";
+import fs from "fs";
+import path from "path";
+
+const CACHE_DIR = "/tmp/router-cache"; // Netlify's temp writeable dir
+const BASE_URL = "https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions";
+
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+const getCacheFile = (operation, sport) =>
+  path.join(CACHE_DIR, `${operation}_${sport || "global"}.json`);
+
 export const handler = async (event) => {
   const params = event.queryStringParameters || {};
-  const { operation, ...rest } = params;
+  const { operation, sport, ...rest } = params;
 
-  const baseUrl = "https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions";
+  if (!operation)
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Missing 'operation' query parameter" }),
+    };
 
-  let target;
+  let endpoint;
   switch (operation) {
     case "getRosterStatus":
-      target = `${baseUrl}/roster-status?${new URLSearchParams(rest)}`;
+      endpoint = "roster-status";
       break;
     case "syncRoster":
-      target = `${baseUrl}/roster-sync?${new URLSearchParams(rest)}`;
+      endpoint = "roster-sync";
       break;
     case "getOdds":
-      target = `${baseUrl}/odds?${new URLSearchParams(rest)}`;
+      endpoint = "odds";
       break;
     default:
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: "Invalid or missing operation parameter" }),
+        body: JSON.stringify({ error: `Invalid operation: ${operation}` }),
       };
   }
 
-  try {
-    const response = await fetch(target);
-    const text = await response.text();
-    return {
-      statusCode: response.status,
-      body: text,
-      headers: { "Content-Type": "application/json" },
-    };
-  } catch (err) {
-    console.error("Router error:", err);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: "Router failed to forward request", details: err.message }),
-    };
+  const url = `${BASE_URL}/${endpoint}?${new URLSearchParams(rest)}`;
+  const cacheFile = getCacheFile(operation, sport);
+  const headers = { "Content-Type": "application/json" };
+
+  // Helper to save cache
+  const saveCache = (data) => {
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify({ ts: Date.now(), data }, null, 2));
+      console.log(`✅ Cached response for ${operation} ${sport || ""}`);
+    } catch (err) {
+      console.warn("⚠️ Cache write failed:", err.message);
+    }
+  };
+
+  // Helper to read cache
+  const readCache = () => {
+    try {
+      if (fs.existsSync(cacheFile)) {
+        const cached = JSON.parse(fs.readFileSync(cacheFile));
+        console.log(`⚙️ Using cached data for ${operation} (${sport || "global"})`);
+        return cached.data;
+      }
+    } catch (err) {
+      console.warn("⚠️ Cache read failed:", err.message);
+    }
+    return null;
+  };
+
+  // Attempt live fetch (retry up to 2x)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      console.log(`🔄 Fetching ${url} (Attempt ${attempt})`);
+      const res = await fetch(url);
+      const text = await res.text();
+
+      if (!res.ok) throw new Error(`Upstream ${res.status}: ${text}`);
+
+      const data = JSON.parse(text);
+      saveCache(data);
+
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          message: `✅ Live data retrieved successfully (${operation})`,
+          source: "live",
+          data,
+        }),
+      };
+    } catch (err) {
+      console.error(`❌ Attempt ${attempt} failed: ${err.message}`);
+      if (attempt === 2) {
+        const cached = readCache();
+        if (cached) {
+          return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({
+              message: `⚠️ Using cached data for ${operation} (live source failed)`,
+              source: "cache",
+              data: cached,
+            }),
+          };
+        }
+        return {
+          statusCode: 502,
+          headers,
+          body: JSON.stringify({
+            error: `All attempts failed for ${operation}`,
+            details: err.message,
+          }),
+        };
+      }
+    }
   }
 };
