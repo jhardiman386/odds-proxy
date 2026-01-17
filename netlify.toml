@@ -3,7 +3,6 @@
 # ⚙️ Global Build Settings
 [build]
   functions = "netlify/functions"
-  publish = "dist"  # or wherever your front-end files go (if any)
 
 # 🧩 Function Configuration
 [functions]
