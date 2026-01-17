@@ -16,56 +16,75 @@ export const handler = async (event) => {
   for (const sport of sports) {
     const file = CACHE_FILE(sport);
     let lastUpdated = null;
+    let ageHours = null;
     let needsRefresh = force;
 
     if (fs.existsSync(file)) {
       const cached = JSON.parse(fs.readFileSync(file, "utf-8"));
       lastUpdated = cached.timestamp;
-      const ageHours = (Date.now() - cached.timestamp) / 36e5;
+      ageHours = (Date.now() - cached.timestamp) / 36e5;
       if (ageHours > MAX_CACHE_AGE_HOURS) needsRefresh = true;
     } else {
       needsRefresh = true;
     }
 
-    // Perform refresh if needed
+    let statusIcon = "✅";
+    let statusText = "Cache fresh";
+    let refreshed = false;
+
+    // Refresh logic
     if (needsRefresh) {
       try {
         const res = await fetch(`${base}/.netlify/functions/roster-sync?sport=${sport}`);
         const data = await res.json();
-        results.push({
-          sport,
-          status: "🔄 Refreshed",
-          message: data.message,
-          active_count: data.active_count,
-          refreshed: true,
-          last_updated: new Date().toISOString(),
-        });
+        refreshed = true;
+        statusIcon = "🔁";
+        statusText = "Refreshed";
+        lastUpdated = Date.now();
+        ageHours = 0;
       } catch (err) {
-        results.push({
-          sport,
-          status: "❌ Refresh failed",
-          error: err.message,
-          refreshed: false,
-          last_updated: lastUpdated ? new Date(lastUpdated).toISOString() : null,
-        });
+        statusIcon = "❌";
+        statusText = `Refresh failed: ${err.message}`;
       }
-    } else {
-      results.push({
-        sport,
-        status: "✅ Cache fresh",
-        refreshed: false,
-        last_updated: new Date(lastUpdated).toISOString(),
-      });
     }
+
+    // Age coloring for dashboard (mobile-friendly)
+    let freshnessGrade = "A";
+    if (ageHours > 6) freshnessGrade = "B";
+    if (ageHours > 12) freshnessGrade = "C";
+    if (ageHours > 24) freshnessGrade = "D";
+    if (!lastUpdated) freshnessGrade = "F";
+
+    results.push({
+      sport,
+      status_icon: statusIcon,
+      status_text: statusText,
+      freshness_grade: freshnessGrade,
+      refreshed,
+      hours_since_update: ageHours ? Number(ageHours.toFixed(2)) : null,
+      last_updated: lastUpdated ? new Date(lastUpdated).toISOString() : null
+    });
   }
+
+  // Sort by freshness (oldest first)
+  results.sort((a, b) => (b.hours_since_update || 0) - (a.hours_since_update || 0));
+
+  const dashboard = {
+    message: "🏈📊 Roster Health Dashboard",
+    forced_refresh: force,
+    timestamp: new Date().toISOString(),
+    summary: {
+      total_sports: results.length,
+      refreshed_today: results.filter((r) => r.refreshed).length,
+      healthy: results.filter((r) => r.freshness_grade === "A").length,
+      warning: results.filter((r) => ["B", "C"].includes(r.freshness_grade)).length,
+      failed: results.filter((r) => r.freshness_grade === "F").length,
+    },
+    sports: results
+  };
 
   return {
     statusCode: 200,
-    body: JSON.stringify({
-      message: "Roster status check complete",
-      results,
-      forced: force,
-      timestamp: new Date().toISOString(),
-    }),
+    body: JSON.stringify(dashboard, null, 2),
   };
 };
