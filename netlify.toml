@@ -20,4 +20,4 @@
 
 # New unified maintenance scheduler (rosters + purge)
 [functions."scheduler"]
-  schedule = "0 */12 * * *"
+  schedule = "0 */6 * * *"
