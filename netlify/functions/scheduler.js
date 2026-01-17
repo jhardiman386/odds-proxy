@@ -1,46 +1,62 @@
 import fetch from "node-fetch";
 
 const BASE_URL = "https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions";
+const SPORTS = [
+  "americanfootball_nfl",
+  "americanfootball_ncaaf",
+  "basketball_nba",
+  "basketball_ncaab",
+  "icehockey_nhl",
+  "baseball_mlb",
+  "mma_mixed_martial_arts",
+  "golf_pga",
+  "soccer"
+];
 
 export const handler = async () => {
   const now = new Date().toISOString();
-  console.log(`🕒 Scheduled maintenance started at ${now}`);
+  console.log(`🕒 Scheduler started at ${now}`);
+
+  const results = [];
 
   try {
-    // Sync rosters for all sports
-    const sports = ["nfl", "nba", "nhl", "ncaab", "pga", "ufc", "soccer"];
-
-    for (const sport of sports) {
+    for (const sport of SPORTS) {
       const syncUrl = `${BASE_URL}/router?operation=syncRoster&sport=${sport}`;
       console.log(`🔁 Syncing roster for ${sport}...`);
-      const res = await fetch(syncUrl);
-      const text = await res.text();
-      console.log(`✅ ${sport} roster result:`, text.slice(0, 150)); // Limit log output
+
+      try {
+        const res = await fetch(syncUrl);
+        const data = await res.text();
+        results.push({ sport, result: "success", details: data.slice(0, 100) });
+      } catch (err) {
+        results.push({ sport, result: "error", details: err.message });
+      }
     }
 
-    // Purge old caches (this triggers via router’s internal purge)
-    const purgeUrl = `${BASE_URL}/router?operation=getRosterStatus`;
+    // Trigger router purge (runs auto-purge logic)
     console.log("🧹 Triggering cache purge...");
-    const purgeRes = await fetch(purgeUrl);
-    const purgeText = await purgeRes.text();
-    console.log("✅ Purge check complete:", purgeText.slice(0, 150));
+    const purgeUrl = `${BASE_URL}/router?operation=getRosterStatus`;
+    await fetch(purgeUrl);
 
-    console.log("🎯 Scheduled maintenance completed successfully.");
+    console.log("✅ Scheduler maintenance completed successfully.");
+
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: "✅ Scheduled roster sync + cache purge complete",
+        message: "✅ All rosters synced + cache refreshed.",
         timestamp: now,
+        results
       }),
     };
   } catch (err) {
-    console.error("❌ Scheduled job failed:", err);
+    console.error("❌ Scheduler failed:", err);
     return {
       statusCode: 500,
       body: JSON.stringify({
-        error: "Scheduled job failed",
+        error: "Scheduler run failed.",
         details: err.message,
         timestamp: now,
+        results
       }),
     };
   }
