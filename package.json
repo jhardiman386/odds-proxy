@@ -1,0 +1,10 @@
+{
+  "name": "sports-analytics-engine",
+  "version": "1.0.0",
+  "description": "Unified Netlify backend for GPT sports data proxy (rosters + odds)",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
