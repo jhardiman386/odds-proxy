@@ -1,13 +1,14 @@
 // ======================================================
-// 🧠 sportsDataproxy.js
-// Unified Data Proxy Handler – orchestrates calls to router
-// Includes roster freshness handshake (Jan 2026)
+// 🧠 sportsDataproxy.js — v3.6.1
+// Unified Orchestrator Data Proxy
+// Handles Roster Freshness + Odds + Props for all sports
+// Patched for NFL Engine (Jan 2026)
 // ======================================================
 
 import fetch from "node-fetch";
 
 // --------------------------------------------
-// 🧩 ROSTER HANDSHAKE
+// 🧩 1. ROSTER HANDSHAKE
 // --------------------------------------------
 async function getRosterStatus(sport = "americanfootball_nfl") {
   const url = `https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions/router?operation=getRosterStatus&sport=${sport}`;
@@ -43,7 +44,7 @@ async function syncRosterIfStale(sport = "americanfootball_nfl") {
 }
 
 // --------------------------------------------
-// 🏈 SPORTS DATA PROXY WRAPPER
+// ⚙️ 2. SPORTS DATA PROXY WRAPPER
 // --------------------------------------------
 export async function sportsDataProxy({
   operation = "getOdds",
@@ -56,8 +57,14 @@ export async function sportsDataProxy({
   dateFormat = "iso"
 } = {}) {
 
-  if (operation === "getRosterStatus" || operation === "syncRoster") {
+  // Roster freshness check for operations that depend on player data
+  if (["getRosterStatus", "syncRoster"].includes(operation)) {
     return await syncRosterIfStale(sport);
+  }
+
+  // Skip unnecessary syncs for odds/props-only operations
+  if (["getOdds", "getProps"].includes(operation) && force) {
+    await syncRosterIfStale(sport);
   }
 
   const url = `https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions/router?operation=${operation}&sport=${sport}&regions=${regions}&markets=${markets}&bookmakers=${bookmakers}&oddsFormat=${oddsFormat}&dateFormat=${dateFormat}`;
@@ -65,6 +72,40 @@ export async function sportsDataProxy({
   if (!res.ok) throw new Error(`sportsDataProxy failed (${res.status})`);
   const data = await res.json();
 
-  console.log(`✅ ${operation} pulled successfully for ${sport}`);
+  console.log(`✅ ${operation.toUpperCase()} pulled successfully for ${sport}`);
   return data;
 }
+
+// --------------------------------------------
+// 🧩 3. HEALTH CHECK (OPTIONAL)
+// --------------------------------------------
+export async function systemHealthCheck() {
+  const sports = ["americanfootball_nfl", "basketball_nba", "icehockey_nhl"];
+  const health = [];
+
+  for (const sport of sports) {
+    try {
+      const status = await getRosterStatus(sport);
+      health.push({
+        sport,
+        players: status.active_count || 0,
+        last_sync: status.last_sync || "unknown",
+      });
+    } catch (err) {
+      health.push({ sport, error: err.message });
+    }
+  }
+
+  console.log("🩺 System Health Summary:", health);
+  return health;
+}
+
+// --------------------------------------------
+// 🧾 4. DEFAULT EXPORT FOR COMPATIBILITY
+// --------------------------------------------
+export default {
+  getRosterStatus,
+  syncRosterIfStale,
+  sportsDataProxy,
+  systemHealthCheck,
+};
