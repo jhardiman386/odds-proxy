@@ -1,5 +1,5 @@
 // ======================================================
-// 🧠 router_v3.6.5.js — Unified Odds + ESPN Roster Fallback
+// 🧠 router_v3.6.6.js — Unified Odds + ESPN Roster Fallback (with Region Fix)
 // ======================================================
 
 import fetch from "node-fetch";
@@ -12,8 +12,9 @@ async function safeFetch(url, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url);
-      if (res.ok) return await res.json();
-      console.warn(`[Attempt ${attempt}] Failed (${res.status})`);
+      const json = await res.json();
+      if (res.ok) return json;
+      console.warn(`[Attempt ${attempt}] Failed (${res.status}): ${JSON.stringify(json)}`);
     } catch (err) {
       console.warn(`[Attempt ${attempt}] Error: ${err.message}`);
     }
@@ -39,19 +40,30 @@ export const handler = async (event) => {
   console.log(`🌀 Router Triggered: ${operation} for ${sport}`);
 
   // ======================================================
-  // 🏈 1. GET ODDS
+  // 🏈 1. GET ODDS (with Region Fix)
   // ======================================================
   if (operation === "getOdds") {
     const baseUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds`;
-    const params = `?regions=us,us2&markets=h2h,spreads,totals,player_props&bookmakers=draftkings,fanduel&oddsFormat=american&dateFormat=iso&apiKey=${ODDS_API_KEY}`;
+    let params = `?regions=us&markets=h2h,spreads,totals,player_props&bookmakers=draftkings,fanduel&oddsFormat=american&dateFormat=iso&apiKey=${ODDS_API_KEY}`;
+
     let data = await safeFetch(baseUrl + params);
+
+    // Retry if region/bookmaker error
+    if (data && (data.error_code === "MISSING_REGION" || data.error_code === "MISSING_BOOKMAKER")) {
+      console.warn("⚠️ Odds API region/bookmaker error — retrying with minimal query...");
+      params = `?regions=us&markets=h2h,spreads,totals&apiKey=${ODDS_API_KEY}`;
+      data = await safeFetch(baseUrl + params);
+    }
 
     if (!data && cache.odds) {
       console.log("♻️ Serving cached odds from", timestamps.odds);
       return { statusCode: 200, body: JSON.stringify({ cached: true, timestamp: timestamps.odds, data: cache.odds }) };
     }
 
-    if (!data) return { statusCode: 502, body: JSON.stringify({ error: "Odds API upstream failure" }) };
+    if (!data || data.error) {
+      console.error("🚨 Odds API failure:", data?.error || "unknown");
+      return { statusCode: 502, body: JSON.stringify({ error: "Odds API upstream failure", details: data }) };
+    }
 
     saveCache("odds", data);
     console.log(`✅ Odds cache refreshed @ ${timestamps.odds}`);
@@ -59,18 +71,29 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // 🧩 2. PLAYER PROPS
+  // 🧩 2. PLAYER PROPS (with same region logic)
   // ======================================================
   if (operation === "getProps") {
-    const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=us,us2&markets=player_props&bookmakers=draftkings,fanduel&oddsFormat=american&apiKey=${ODDS_API_KEY}`;
-    let data = await safeFetch(url);
+    const baseUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds`;
+    let params = `?regions=us&markets=player_props&bookmakers=draftkings,fanduel&oddsFormat=american&apiKey=${ODDS_API_KEY}`;
+
+    let data = await safeFetch(baseUrl + params);
+
+    if (data && (data.error_code === "MISSING_REGION" || data.error_code === "MISSING_BOOKMAKER")) {
+      console.warn("⚠️ Props API region/bookmaker error — retrying with minimal query...");
+      params = `?regions=us&markets=player_props&apiKey=${ODDS_API_KEY}`;
+      data = await safeFetch(baseUrl + params);
+    }
 
     if (!data && cache.props) {
       console.log("♻️ Serving cached props from", timestamps.props);
       return { statusCode: 200, body: JSON.stringify({ cached: true, timestamp: timestamps.props, data: cache.props }) };
     }
 
-    if (!data) return { statusCode: 502, body: JSON.stringify({ error: "Player props API failed" }) };
+    if (!data || data.error) {
+      console.error("🚨 Player props API failure:", data?.error || "unknown");
+      return { statusCode: 502, body: JSON.stringify({ error: "Player props API failed", details: data }) };
+    }
 
     saveCache("props", data);
     console.log(`✅ Player prop cache refreshed @ ${timestamps.props}`);
@@ -83,7 +106,6 @@ export const handler = async (event) => {
   if (operation === "syncRoster") {
     let data = null;
 
-    // Try SportsDataIO if key present
     if (SPORTS_API_KEY) {
       const url = `https://api.sportsdata.io/v3/nfl/scores/json/Players?key=${SPORTS_API_KEY}`;
       data = await safeFetch(url);
@@ -95,7 +117,6 @@ export const handler = async (event) => {
       console.warn("⚠️ SportsDataIO roster failed or unauthorized, switching to ESPN fallback");
     }
 
-    // ESPN fallback
     const espnUrl = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams";
     const espnData = await safeFetch(espnUrl);
 
@@ -137,8 +158,8 @@ export const handler = async (event) => {
   // 🔁 5. REFRESH ALL
   // ======================================================
   if (operation === "refreshAll") {
-    console.log("🕒 Running unified refresh cycle (odds + ESPN roster)...");
-    await safeFetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=us,us2&markets=h2h,spreads,totals&apiKey=${ODDS_API_KEY}`);
+    console.log("🕒 Running unified refresh cycle (odds + roster)...");
+    await safeFetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=us&markets=h2h,spreads,totals&apiKey=${ODDS_API_KEY}`);
     await safeFetch("https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams");
     return { statusCode: 200, body: JSON.stringify({ message: "✅ Refresh complete", timestamp: new Date().toISOString() }) };
   }
