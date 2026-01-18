@@ -1,4 +1,3 @@
-// ✅ HEALTH CHECK FUNCTION — FIXED AUTH + ENDPOINTS
 import fetch from "node-fetch";
 
 export default async () => {
@@ -10,9 +9,13 @@ export default async () => {
 
   const oddsPing = await testOddsAPI(ODDS_API_KEY);
   const rosterPing = await testSportsDataIO(ROSTER_API_KEY);
+  const routerPing = await testRouterFunction();  // 🧠 new line
+
+  const allHealthy =
+    oddsPing === "ok" && rosterPing === "ok" && routerPing === "ok";
 
   const result = {
-    status: "ok",
+    status: allHealthy ? "ok" : "degraded",
     timestamp,
     uptime_ms: Date.now() - start,
     keys: {
@@ -21,7 +24,8 @@ export default async () => {
     },
     connectivity: {
       odds_api: oddsPing,
-      sportsdata_io: rosterPing
+      sportsdata_io: rosterPing,
+      router_function: routerPing // 🧠 new entry
     },
     environment: {
       node_version: process.version,
@@ -30,7 +34,7 @@ export default async () => {
   };
 
   return new Response(JSON.stringify(result, null, 2), {
-    status: 200,
+    status: allHealthy ? 200 : 500,
     headers: { "Content-Type": "application/json" }
   });
 };
@@ -52,6 +56,19 @@ async function testSportsDataIO(apiKey) {
       headers: { "Ocp-Apim-Subscription-Key": apiKey },
       timeout: 4000
     });
+    return res.ok ? "ok" : `fail (${res.status})`;
+  } catch (err) {
+    return `error (${err.message})`;
+  }
+}
+
+// 🧠 NEW FUNCTION — checks your own orchestrator router
+async function testRouterFunction() {
+  try {
+    const res = await fetch(
+      "https://super-pipeline-orchestrator.netlify.app/.netlify/functions/router",
+      { timeout: 4000 }
+    );
     return res.ok ? "ok" : `fail (${res.status})`;
   } catch (err) {
     return `error (${err.message})`;
