@@ -1,6 +1,5 @@
-// netlify/functions/health.js
-
-import fetch from "node-fetch";  // ✅ REQUIRED
+// ✅ HEALTH CHECK FUNCTION — AUTHENTICATED VERSION
+import fetch from "node-fetch";
 
 export default async () => {
   const start = Date.now();
@@ -9,8 +8,8 @@ export default async () => {
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
   const ROSTER_API_KEY = process.env.ROSTER_API_KEY;
 
-  const oddsPing = await testAPI("https://api.the-odds-api.com");
-  const rosterPing = await testAPI("https://api.sportsdata.io");
+  const oddsPing = await testOddsAPI(ODDS_API_KEY);
+  const rosterPing = await testSportsDataIO(ROSTER_API_KEY);
 
   const result = {
     status: "ok",
@@ -22,7 +21,7 @@ export default async () => {
     },
     connectivity: {
       odds_api: oddsPing,
-      roster_api: rosterPing
+      sportsdata_io: rosterPing
     },
     environment: {
       node_version: process.version,
@@ -36,9 +35,24 @@ export default async () => {
   });
 };
 
-async function testAPI(url) {
+async function testOddsAPI(apiKey) {
   try {
-    const res = await fetch(url, { method: "HEAD", timeout: 3000 });
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports`, {
+      headers: { "x-api-key": apiKey },
+      timeout: 4000
+    });
+    return res.ok ? "ok" : `fail (${res.status})`;
+  } catch (err) {
+    return `error (${err.message})`;
+  }
+}
+
+async function testSportsDataIO(apiKey) {
+  try {
+    const res = await fetch("https://api.sportsdata.io/v4/nfl/scores/json/Teams", {
+      headers: { "Ocp-Apim-Subscription-Key": apiKey },
+      timeout: 4000
+    });
     return res.ok ? "ok" : `fail (${res.status})`;
   } catch (err) {
     return `error (${err.message})`;
