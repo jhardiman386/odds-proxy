@@ -1,54 +1,27 @@
-# ============================================================
-# 🧱 BUILD CONFIGURATION
-# ============================================================
 [build]
   functions = "netlify/functions"
   publish = "dist"
   command = "npm run build"
 
-# ============================================================
-# ⚙️ FUNCTION BUNDLING
-# ============================================================
 [functions]
   node_bundler = "esbuild"
   included_files = ["netlify/functions/router.js"]
   external_node_modules = ["node-fetch"]
   node_version = "18"
 
-# ============================================================
-# 🔁 ROUTER ENDPOINT HANDLING
-# ============================================================
 [[redirects]]
   from = "/.netlify/functions/*"
   to = "/.netlify/functions/:splat"
   status = 200
 
-# ============================================================
-# 🕒 SCHEDULED JOBS
-# ============================================================
-
-# 12-hour roster refresh (legacy support for older pipelines)
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
   function = "router"
 
-# 6-hour unified maintenance scheduler
-# → pre-fetches odds, props, and roster caches
 [scheduled."scheduler"]
   cron = "0 */6 * * *"
   function = "router"
 
-# ============================================================
-# 🌍 ENVIRONMENT SETTINGS (optional)
-# ============================================================
-[template.environment]
-  ODDS_API_KEY = "your_odds_api_key_here"
-  ROSTER_API_KEY = "your_sportsdata_key_here"
-  REGION = "us,us2"
-
-# ============================================================
-# 🧾 LOGGING + HEADERS
-# ============================================================
 [[headers]]
   for = "/.netlify/functions/*"
   [headers.values]
