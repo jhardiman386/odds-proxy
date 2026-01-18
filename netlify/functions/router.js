@@ -1,71 +1,56 @@
 // ======================================================
-// 🧠 router_v3.6.3.js — Production-Grade Data Proxy
-// Unified Odds + Props + Roster Handler with Smart Fallbacks
-// Supports: NFL, NBA, NCAAF, NCAAB, NHL
+// 🧠 router_v3.6.5.js — Unified Odds + ESPN Roster Fallback
 // ======================================================
 
 import fetch from "node-fetch";
 
-let cache = {
-  odds: null,
-  props: null,
-  rosters: {},
-};
+let cache = { odds: null, props: null, rosters: {} };
 let timestamps = {};
 
+// Utility: Safe fetch with retry
 async function safeFetch(url, retries = 3) {
-  for (let i = 1; i <= retries; i++) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url);
       if (res.ok) return await res.json();
-      console.warn(`⚠️ [Attempt ${i}] Failed (${res.status})`);
+      console.warn(`[Attempt ${attempt}] Failed (${res.status})`);
     } catch (err) {
-      console.warn(`⚠️ [Attempt ${i}] Error: ${err.message}`);
+      console.warn(`[Attempt ${attempt}] Error: ${err.message}`);
     }
-    await new Promise(r => setTimeout(r, 1000 * i));
+    await new Promise(r => setTimeout(r, 1000 * attempt));
   }
   return null;
 }
 
+// Utility: Save to cache
 function saveCache(key, data) {
   cache[key] = data;
   timestamps[key] = new Date().toISOString();
 }
 
+// Main handler
 export const handler = async (event) => {
-  const params = event.queryStringParameters || {};
-  const operation = params.operation || "getOdds";
-  const sport = params.sport || "americanfootball_nfl";
+  const { operation = "getOdds", sport = "americanfootball_nfl" } =
+    event.queryStringParameters || {};
 
   const ODDS_API_KEY = process.env.ODDS_API_KEY;
   const SPORTS_API_KEY = process.env.SPORTSDATAIO_KEY;
-  const REGIONS = (process.env.ODDS_REGIONS || "us,us2").split(",");
-  const BOOKMAKERS = (process.env.ODDS_BOOKMAKERS || "draftkings,fanduel,betmgm").split(",");
-
-  if (!ODDS_API_KEY || !SPORTS_API_KEY) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        error: "Missing API keys",
-        details: "Set ODDS_API_KEY and SPORTSDATAIO_KEY in environment variables."
-      })
-    };
-  }
 
   console.log(`🌀 Router Triggered: ${operation} for ${sport}`);
 
   // ======================================================
-  // 🎯 GET ODDS (Standard fetch with cache reuse)
+  // 🏈 1. GET ODDS
   // ======================================================
   if (operation === "getOdds") {
     const baseUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds`;
-    const params = `?regions=${REGIONS.join(",")}&bookmakers=${BOOKMAKERS.join(",")}&markets=h2h,spreads,totals&oddsFormat=american&apiKey=${ODDS_API_KEY}`;
+    const params = `?regions=us,us2&markets=h2h,spreads,totals,player_props&bookmakers=draftkings,fanduel&oddsFormat=american&dateFormat=iso&apiKey=${ODDS_API_KEY}`;
     let data = await safeFetch(baseUrl + params);
 
     if (!data && cache.odds) {
       console.log("♻️ Serving cached odds from", timestamps.odds);
       return { statusCode: 200, body: JSON.stringify({ cached: true, timestamp: timestamps.odds, data: cache.odds }) };
     }
+
     if (!data) return { statusCode: 502, body: JSON.stringify({ error: "Odds API upstream failure" }) };
 
     saveCache("odds", data);
@@ -74,81 +59,92 @@ export const handler = async (event) => {
   }
 
   // ======================================================
-  // 🧠 GET PROPS (Smart multi-region fallback + cache reuse)
+  // 🧩 2. PLAYER PROPS
   // ======================================================
   if (operation === "getProps") {
-    const baseUrl = `https://api.the-odds-api.com/v4/sports/${sport}/odds`;
-    let data = null;
-
-    for (const region of REGIONS) {
-      const url = `${baseUrl}?regions=${region}&bookmakers=${BOOKMAKERS.join(",")}&markets=player_props&oddsFormat=american&apiKey=${ODDS_API_KEY}`;
-      const result = await safeFetch(url);
-
-      if (result?.error_code === "MISSING_REGION") {
-        console.warn(`⚠️ Region not valid: ${region} — retrying next.`);
-        continue;
-      }
-
-      if (result && Array.isArray(result) && result.length > 0) {
-        data = result;
-        console.log(`✅ Player props successfully loaded from region: ${region}`);
-        break;
-      } else {
-        console.warn(`⚠️ No props found in region: ${region}`);
-      }
-    }
+    const url = `https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=us,us2&markets=player_props&bookmakers=draftkings,fanduel&oddsFormat=american&apiKey=${ODDS_API_KEY}`;
+    let data = await safeFetch(url);
 
     if (!data && cache.props) {
       console.log("♻️ Serving cached props from", timestamps.props);
       return { statusCode: 200, body: JSON.stringify({ cached: true, timestamp: timestamps.props, data: cache.props }) };
     }
-    if (!data) {
-      console.warn("⚠️ No player props available — fallback empty.");
-      return { statusCode: 204, body: JSON.stringify({ warning: "No player props currently available" }) };
-    }
+
+    if (!data) return { statusCode: 502, body: JSON.stringify({ error: "Player props API failed" }) };
 
     saveCache("props", data);
-    console.log(`✅ Player props cache refreshed @ ${timestamps.props}`);
+    console.log(`✅ Player prop cache refreshed @ ${timestamps.props}`);
     return { statusCode: 200, body: JSON.stringify({ cached: false, timestamp: timestamps.props, data }) };
   }
 
   // ======================================================
-  // 🧩 SYNC ROSTER (SportsDataIO API)
+  // 🧠 3. ROSTER SYNC — ESPN FALLBACK
   // ======================================================
   if (operation === "syncRoster") {
-    const url = `https://api.sportsdata.io/v3/${sport}/scores/json/Players?key=${SPORTS_API_KEY}`;
-    const data = await safeFetch(url);
+    let data = null;
 
-    if (!data) return { statusCode: 502, body: JSON.stringify({ error: "Roster sync failed" }) };
+    // Try SportsDataIO if key present
+    if (SPORTS_API_KEY) {
+      const url = `https://api.sportsdata.io/v3/nfl/scores/json/Players?key=${SPORTS_API_KEY}`;
+      data = await safeFetch(url);
+      if (data && !data.statusCode && Array.isArray(data)) {
+        saveCache(`${sport}_roster`, data);
+        console.log(`✅ SportsDataIO roster synced (${data.length} players)`);
+        return { statusCode: 200, body: JSON.stringify({ message: "✅ SportsDataIO roster synced", count: data.length, timestamp: timestamps[`${sport}_roster`] }) };
+      }
+      console.warn("⚠️ SportsDataIO roster failed or unauthorized, switching to ESPN fallback");
+    }
 
-    saveCache(`${sport}_roster`, data);
-    console.log(`✅ ${sport.toUpperCase()} roster synced (${data.length} players)`);
+    // ESPN fallback
+    const espnUrl = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams";
+    const espnData = await safeFetch(espnUrl);
 
+    if (espnData && espnData.sports?.[0]?.leagues?.[0]?.teams) {
+      const players = espnData.sports[0].leagues[0].teams.flatMap(team =>
+        (team.team?.athletes || []).map(a => ({
+          PlayerID: a.id,
+          Name: a.displayName,
+          Team: team.team.displayName,
+          Position: a.position?.abbreviation || "N/A"
+        }))
+      );
+      saveCache(`${sport}_roster`, players);
+      console.log(`✅ ESPN roster synced (${players.length} players)`);
+      return { statusCode: 200, body: JSON.stringify({ message: "✅ ESPN roster synced", count: players.length, timestamp: timestamps[`${sport}_roster`] }) };
+    }
+
+    return { statusCode: 502, body: JSON.stringify({ error: "Roster sync failed from all sources" }) };
+  }
+
+  // ======================================================
+  // 🔍 4. GET ROSTER STATUS
+  // ======================================================
+  if (operation === "getRosterStatus") {
+    const roster = cache[`${sport}_roster`];
+    const count = roster ? roster.length : 0;
     return {
       statusCode: 200,
       body: JSON.stringify({
-        message: `✅ ${sport.toUpperCase()} roster synced successfully.`,
-        active_count: data.length,
-        timestamp: timestamps[`${sport}_roster`],
+        message: `📊 Roster status for ${sport}`,
+        cached: !!roster,
+        active_count: count,
+        last_sync: timestamps[`${sport}_roster`] || "No sync yet"
       })
     };
   }
 
   // ======================================================
-  // 🔁 REFRESH ALL (Odds + Rosters for major sports)
+  // 🔁 5. REFRESH ALL
   // ======================================================
   if (operation === "refreshAll") {
-    console.log("🕒 Running unified refresh cycle...");
-    const sports = ["americanfootball_nfl", "basketball_nba", "icehockey_nhl"];
-    for (const s of sports) {
-      await safeFetch(`https://api.sportsdata.io/v3/${s}/scores/json/Players?key=${SPORTS_API_KEY}`);
-      await safeFetch(`https://api.the-odds-api.com/v4/sports/${s}/odds?regions=us&markets=h2h,spreads,totals&bookmakers=draftkings&apiKey=${ODDS_API_KEY}`);
-    }
-    return { statusCode: 200, body: JSON.stringify({ message: "✅ All sports refreshed successfully", timestamp: new Date().toISOString() }) };
+    console.log("🕒 Running unified refresh cycle (odds + ESPN roster)...");
+    await safeFetch(`https://api.the-odds-api.com/v4/sports/${sport}/odds?regions=us,us2&markets=h2h,spreads,totals&apiKey=${ODDS_API_KEY}`);
+    await safeFetch("https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams");
+    return { statusCode: 200, body: JSON.stringify({ message: "✅ Refresh complete", timestamp: new Date().toISOString() }) };
   }
 
   // ======================================================
-  // ❌ INVALID OPERATION
+  // ❌ 6. INVALID OPERATION
   // ======================================================
   return {
     statusCode: 400,
