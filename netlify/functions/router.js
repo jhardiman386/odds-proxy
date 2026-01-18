@@ -26,9 +26,7 @@ export default async (req, res) => {
     const region = regions || DEFAULT_REGION;
 
     switch (operation) {
-      // =========================
       // 1️⃣  GET ROSTER STATUS
-      // =========================
       case 'getRosterStatus': {
         const rosterUrl = `${BASE_ROSTER_URL}/${sportKey}/scores/json/Players?key=${ROSTER_API_KEY}`;
         const rosterRes = await fetch(rosterUrl);
@@ -42,9 +40,7 @@ export default async (req, res) => {
         break;
       }
 
-      // =========================
       // 2️⃣  SYNC ROSTER (FORCE REFRESH)
-      // =========================
       case 'syncRoster': {
         const syncUrl = `${BASE_ROSTER_URL}/${sportKey}/scores/json/Players?key=${ROSTER_API_KEY}`;
         const syncRes = await fetch(syncUrl, { cache: 'no-store' });
@@ -58,9 +54,7 @@ export default async (req, res) => {
         break;
       }
 
-      // =========================
       // 3️⃣  GET ODDS (H2H / SPREADS / TOTALS / PROPS)
-      // =========================
       case 'getOdds': {
         const regionParam = region || 'us';
         const marketParam = markets || 'h2h,spreads,totals,player_props';
