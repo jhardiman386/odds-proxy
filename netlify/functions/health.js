@@ -1,4 +1,4 @@
-// ✅ HEALTH CHECK FUNCTION — AUTHENTICATED VERSION
+// ✅ HEALTH CHECK FUNCTION — FIXED AUTH + ENDPOINTS
 import fetch from "node-fetch";
 
 export default async () => {
@@ -37,8 +37,7 @@ export default async () => {
 
 async function testOddsAPI(apiKey) {
   try {
-    const res = await fetch(`https://api.the-odds-api.com/v4/sports`, {
-      headers: { "x-api-key": apiKey },
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${apiKey}`, {
       timeout: 4000
     });
     return res.ok ? "ok" : `fail (${res.status})`;
@@ -49,7 +48,7 @@ async function testOddsAPI(apiKey) {
 
 async function testSportsDataIO(apiKey) {
   try {
-    const res = await fetch("https://api.sportsdata.io/v4/nfl/scores/json/Teams", {
+    const res = await fetch("https://api.sportsdata.io/v3/nfl/scores/json/Teams", {
       headers: { "Ocp-Apim-Subscription-Key": apiKey },
       timeout: 4000
     });
