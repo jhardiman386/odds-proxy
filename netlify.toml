@@ -1,20 +1,22 @@
 # ============================================================
-# 🧱 BUILD CONFIGURATION
+# 🧱 BUILD CONFIGURATION — Serverless-only deployment
 # ============================================================
 [build]
   functions = "netlify/functions"
-  publish = "dist"
-  command = "npm run build"
+  command = ""  # No build step required, deploy functions only
 
 # ============================================================
 # ⚙️ FUNCTION SETTINGS
 # ============================================================
 [functions]
   node_bundler = "esbuild"
-  included_files = ["netlify/functions/router.js", "netlify/functions/health.js"]
+  included_files = [
+    "netlify/functions/router.js",
+    "netlify/functions/health.js"
+  ]
   external_node_modules = ["node-fetch"]
 
-# ✅ Node version must be declared in an environment object
+# ✅ Node version declared via environment block
 [functions.environment]
   NODE_VERSION = "18"
 
@@ -42,7 +44,7 @@
   function = "health"
 
 # ============================================================
-# 🌍 HEADERS
+# 🌍 HEADERS (CORS)
 # ============================================================
 [[headers]]
   for = "/.netlify/functions/*"
