@@ -1,75 +1,96 @@
 /**
- * Unified Sports Data Proxy — Netlify Router
- * Compatible with Super-Pipeline v3.2.0+
- * Supports: getRosterStatus, syncRoster, getOdds
+ * UNIFIED SPORTS DATA ROUTER (v3.2.1-LTS)
+ * Resilient version — supports multi-endpoint + fallback chains
+ * Works with Super-Pipeline Orchestrator v3.2.x
  */
 
-import fetch from 'node-fetch';
+import fetch from "node-fetch";
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const ROSTER_API_KEY = process.env.ROSTER_API_KEY;
-const BASE_ODDS_URL = 'https://api.the-odds-api.com/v4/sports';
-const BASE_ROSTER_URL = 'https://api.sportsdata.io/v4';
-const DEFAULT_REGION = 'us';
+
+// --- Primary & fallback endpoints
+const ENDPOINTS = {
+  odds: [
+    "https://api.the-odds-api.com/v4/sports",
+    "https://api.oddsjam.com/v4/sports",            // fallback 1
+    "https://sports-api.io/v4/sports"               // fallback 2
+  ],
+  roster: [
+    "https://api.sportsdata.io/v4",
+    "https://backup.sportsdata.io/v4"
+  ]
+};
+
+const DEFAULTS = {
+  region: "us",
+  markets: "h2h,spreads,totals,player_props",
+  bookmakers: "draftkings,fanduel",
+  oddsFormat: "american",
+  dateFormat: "iso"
+};
+
+// helper — try multiple sources until one succeeds
+async function tryFetch(urls, opts = {}) {
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, opts);
+      if (res.ok) return await res.json();
+    } catch (err) {
+      console.warn(`❌ ${url} failed:`, err.message);
+    }
+  }
+  throw new Error("All endpoints failed.");
+}
 
 export default async (req, res) => {
   try {
     const body = await req.json();
-    const { operation, sport, regions, markets, bookmakers, oddsFormat, dateFormat, force } = body;
+    const {
+      operation,
+      sport = "americanfootball_nfl",
+      regions = DEFAULTS.region,
+      markets = DEFAULTS.markets,
+      bookmakers = DEFAULTS.bookmakers,
+      oddsFormat = DEFAULTS.oddsFormat,
+      dateFormat = DEFAULTS.dateFormat
+    } = body;
 
-    if (!operation) {
-      return res.status(400).json({ message: 'Missing required field: operation' });
-    }
-
-    let responseData;
-    const sportKey = sport || 'americanfootball_nfl';
-    const region = regions || DEFAULT_REGION;
+    let payload = {};
 
     switch (operation) {
-      // 1️⃣  GET ROSTER STATUS
-      case 'getRosterStatus': {
-        const rosterUrl = `${BASE_ROSTER_URL}/${sportKey}/scores/json/Players?key=${ROSTER_API_KEY}`;
-        const rosterRes = await fetch(rosterUrl);
-        const rosterJson = await rosterRes.json();
-        responseData = {
-          message: 'Roster status fetched successfully',
-          sport: sportKey,
-          count: rosterJson?.length || 0,
-          data: rosterJson,
-        };
+      // ------------------------------------------------------------------
+      case "getRosterStatus": {
+        const urls = ENDPOINTS.roster.map(
+          base => `${base}/${sport}/scores/json/Players?key=${ROSTER_API_KEY}`
+        );
+        const data = await tryFetch(urls);
+        payload = { message: "Roster status fetched", sport, count: data?.length || 0, data };
         break;
       }
 
-      // 2️⃣  SYNC ROSTER (FORCE REFRESH)
-      case 'syncRoster': {
-        const syncUrl = `${BASE_ROSTER_URL}/${sportKey}/scores/json/Players?key=${ROSTER_API_KEY}`;
-        const syncRes = await fetch(syncUrl, { cache: 'no-store' });
-        const syncJson = await syncRes.json();
-        responseData = {
-          message: 'Roster synced successfully',
-          sport: sportKey,
-          count: syncJson?.length || 0,
-          data: syncJson,
-        };
+      case "syncRoster": {
+        const urls = ENDPOINTS.roster.map(
+          base => `${base}/${sport}/scores/json/Players?key=${ROSTER_API_KEY}`
+        );
+        const data = await tryFetch(urls, { cache: "no-store" });
+        payload = { message: "Roster synced", sport, count: data?.length || 0, data };
         break;
       }
 
-      // 3️⃣  GET ODDS (H2H / SPREADS / TOTALS / PROPS)
-      case 'getOdds': {
-        const regionParam = region || 'us';
-        const marketParam = markets || 'h2h,spreads,totals,player_props';
-        const bookmakerParam = bookmakers || 'draftkings,fanduel';
-        const oddsUrl = `${BASE_ODDS_URL}/${sportKey}/odds?regions=${regionParam}&markets=${marketParam}&bookmakers=${bookmakerParam}&oddsFormat=${oddsFormat || 'american'}&dateFormat=${dateFormat || 'iso'}&apiKey=${ODDS_API_KEY}`;
-
-        const oddsRes = await fetch(oddsUrl);
-        const oddsJson = await oddsRes.json();
-
-        responseData = {
-          message: 'Odds data retrieved successfully',
-          sport: sportKey,
-          region: regionParam,
-          marketCount: oddsJson?.length || 0,
-          data: oddsJson,
+      case "getOdds": {
+        const urls = ENDPOINTS.odds.map(
+          base =>
+            `${base}/${sport}/odds?regions=${regions}&markets=${markets}&bookmakers=${bookmakers}` +
+            `&oddsFormat=${oddsFormat}&dateFormat=${dateFormat}&apiKey=${ODDS_API_KEY}`
+        );
+        const data = await tryFetch(urls);
+        payload = {
+          message: "Odds data retrieved",
+          sport,
+          region: regions,
+          marketCount: data?.length || 0,
+          data
         };
         break;
       }
@@ -78,9 +99,12 @@ export default async (req, res) => {
         return res.status(400).json({ message: `Unknown operation: ${operation}` });
     }
 
-    return res.status(200).json(responseData);
-  } catch (error) {
-    console.error('Router error:', error);
-    return res.status(500).json({ message: 'Router function failed', error: error.message });
+    return res.status(200).json(payload);
+  } catch (err) {
+    console.error("Router error:", err);
+    return res.status(500).json({
+      message: "Router function failed",
+      error: err.message
+    });
   }
 };
