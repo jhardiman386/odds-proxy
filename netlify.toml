@@ -1,19 +1,37 @@
+# ============================================================
+# 🧱 BUILD CONFIGURATION
+# ============================================================
 [build]
   functions = "netlify/functions"
   publish = "dist"
   command = "npm run build"
 
+# ============================================================
+# ⚙️ FUNCTION SETTINGS
+# ============================================================
 [functions]
   node_bundler = "esbuild"
-  included_files = ["netlify/functions/router.js"]
+  included_files = ["netlify/functions/router.js", "netlify/functions/health.js"]
   external_node_modules = ["node-fetch"]
-  node_version = "18"
 
+# ✅ Node version must be specified under an object
+[functions.node_bundler]
+  # nothing needed here, just ensures syntax object type is valid
+
+[functions.environment]
+  NODE_VERSION = "18"
+
+# ============================================================
+# 🔁 ROUTING
+# ============================================================
 [[redirects]]
   from = "/.netlify/functions/*"
   to = "/.netlify/functions/:splat"
   status = 200
 
+# ============================================================
+# 🕒 SCHEDULED JOBS
+# ============================================================
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
   function = "router"
@@ -22,6 +40,13 @@
   cron = "0 */6 * * *"
   function = "router"
 
+[scheduled."health-check"]
+  cron = "*/30 * * * *"
+  function = "health"
+
+# ============================================================
+# 🌍 HEADERS
+# ============================================================
 [[headers]]
   for = "/.netlify/functions/*"
   [headers.values]
