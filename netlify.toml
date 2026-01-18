@@ -14,10 +14,7 @@
   included_files = ["netlify/functions/router.js", "netlify/functions/health.js"]
   external_node_modules = ["node-fetch"]
 
-# ✅ Node version must be specified under an object
-[functions.node_bundler]
-  # nothing needed here, just ensures syntax object type is valid
-
+# ✅ Node version must be declared in an environment object
 [functions.environment]
   NODE_VERSION = "18"
 
