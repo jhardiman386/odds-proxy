@@ -3,20 +3,20 @@
 # ============================================================
 [build]
   functions = "netlify/functions"
-  command = ""  # No build step required, deploy functions only
+  command = "" # No build step required
 
 # ============================================================
 # ⚙️ FUNCTION SETTINGS
 # ============================================================
 [functions]
   node_bundler = "esbuild"
-  included_files = [
-    "netlify/functions/router.js",
-    "netlify/functions/health.js"
-  ]
+
+  # ✅ Include ALL .js functions inside /netlify/functions
+  included_files = ["netlify/functions/**"]
+
+  # ✅ External modules needed for fetch + orchestration
   external_node_modules = ["node-fetch"]
 
-# ✅ Node version declared via environment block
 [functions.environment]
   NODE_VERSION = "18"
 
@@ -24,12 +24,12 @@
 # 🔁 ROUTING
 # ============================================================
 [[redirects]]
-  from = "/.netlify/functions/*"
+  from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
 
 # ============================================================
-# 🕒 SCHEDULED JOBS
+# 🕒 SCHEDULED JOBS (Orchestrator Auto Refresh)
 # ============================================================
 [scheduled."roster-refresh"]
   cron = "0 */12 * * *"
@@ -51,4 +51,4 @@
   [headers.values]
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Headers = "Content-Type"
-    Access-Control-Allow-Methods = "POST, OPTIONS"
+    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
