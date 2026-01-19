@@ -1,0 +1,119 @@
+/**
+ * ============================================================
+ * 🧭 SUPER-PIPELINE ORCHESTRATOR ROUTER v3.2.4
+ * Unified routing for roster, odds, and scheduler functions
+ * Domain: super-pipeline-orchestrator.netlify.app
+ * ============================================================
+ */
+
+const BASE_URL =
+  process.env.URL ||
+  "https://super-pipeline-orchestrator.netlify.app/.netlify/functions";
+
+exports.handler = async (event) => {
+  try {
+    const params = event.queryStringParameters || {};
+    const operation = params.operation || "";
+    const sport = params.sport || "";
+    const regions = params.regions || "us,us2";
+    const markets = params.markets || "all";
+    const bookmakers = params.bookmakers || "draftkings,fanduel";
+    const oddsFormat = params.oddsFormat || "american";
+    const dateFormat = params.dateFormat || "iso";
+    const force = params.force || false;
+
+    console.log(`[Router] Operation: ${operation || "(none)"} | Sport: ${sport}`);
+
+    // Helper: forward to another Netlify function
+    const callFunction = async (fn, query) => {
+      const url = `${BASE_URL}/${fn}?${query}`;
+      console.log(`[Router] Forwarding to: ${url}`);
+      const res = await fetch(url);
+      const text = await res.text();
+      return {
+        statusCode: res.status,
+        body: text || JSON.stringify({ message: "Empty downstream response" }),
+      };
+    };
+
+    // ============================================================
+    // MAIN ROUTER SWITCH
+    // ============================================================
+    switch (operation) {
+      // ✅ HEALTH / DEFAULT (no operation or health/status)
+      case "":
+      case "health":
+      case "status":
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            status: "ok",
+            service: "router",
+            timestamp: new Date().toISOString(),
+            environment: {
+              node_version: process.version,
+              region: process.env.AWS_REGION || "us",
+            },
+          }),
+        };
+
+      // 🏈 ROSTER OPERATIONS
+      case "getRosterStatus":
+      case "rosterStatus":
+        return await callFunction("roster-status", `sport=${sport}&force=${force}`);
+
+      case "syncRoster":
+      case "rosterSync":
+        return await callFunction("roster-sync", `sport=${sport}`);
+
+      case "refreshRoster":
+      case "rosterRefresh":
+        return await callFunction("roster-refresh", `sport=${sport}`);
+
+      // 🎯 ODDS / MARKET OPERATIONS
+      case "getOdds":
+      case "odds":
+        return await callFunction(
+          "sportsDataproxy",
+          `operation=getOdds&sport=${sport}&regions=${regions}&markets=${markets}&bookmakers=${bookmakers}&oddsFormat=${oddsFormat}&dateFormat=${dateFormat}`
+        );
+
+      // 🕒 SCHEDULER / VALIDATION
+      case "scheduler":
+        return await callFunction("scheduler", "");
+
+      case "validate_configs":
+      case "validateConfigs":
+        return await callFunction("validate_configs", "");
+
+      // 🚨 DEFAULT / UNKNOWN OPERATION
+      default:
+        return {
+          statusCode: 400,
+          body: JSON.stringify({
+            error: "Unknown or unsupported operation",
+            received_operation: operation,
+            valid_operations: [
+              "health",
+              "status",
+              "getRosterStatus",
+              "syncRoster",
+              "refreshRoster",
+              "getOdds",
+              "scheduler",
+              "validate_configs",
+            ],
+          }),
+        };
+    }
+  } catch (err) {
+    console.error("[Router] Error:", err);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: "Router internal error",
+        details: err.message || "No error message",
+      }),
+    };
+  }
+};
