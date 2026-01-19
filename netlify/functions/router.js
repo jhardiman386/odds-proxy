@@ -1,107 +1,118 @@
 /**
- * Unified Super-Pipeline Router v3.2.1
- * Compatible with: NFL/NBA/NHL/NCAAF/NCAAB/PGA/SOCCER/UFC pipelines
- * Purpose: Route orchestrator operations to correct Netlify functions.
- * Author: Professional Sports Analytics Engine (2026)
+ * ============================================================
+ * 🧭 SUPER-PIPELINE ORCHESTRATOR ROUTER v3.2.4
+ * Unified routing for roster, odds, and scheduler functions
+ * Domain: super-pipeline-orchestrator.netlify.app
+ * ============================================================
  */
 
-const BASE_URL = process.env.URL || 'https://jazzy-mandazi-d04d35.netlify.app/.netlify/functions';
+const BASE_URL =
+  process.env.URL ||
+  "https://super-pipeline-orchestrator.netlify.app/.netlify/functions";
 
 exports.handler = async (event) => {
   try {
     const params = event.queryStringParameters || {};
-    const operation = params.operation || '';
-    const sport = params.sport || '';
-    const regions = params.regions || 'us,us2';
-    const markets = params.markets || 'all';
-    const bookmakers = params.bookmakers || 'draftkings,fanduel';
-    const oddsFormat = params.oddsFormat || 'american';
-    const dateFormat = params.dateFormat || 'iso';
+    const operation = params.operation || "";
+    const sport = params.sport || "";
+    const regions = params.regions || "us,us2";
+    const markets = params.markets || "all";
+    const bookmakers = params.bookmakers || "draftkings,fanduel";
+    const oddsFormat = params.oddsFormat || "american";
+    const dateFormat = params.dateFormat || "iso";
     const force = params.force || false;
 
-    console.log(`[Router] Received operation: ${operation} | sport: ${sport}`);
+    console.log(`[Router] Operation: ${operation || "(none)"} | Sport: ${sport}`);
 
-    // Helper to fetch downstream function
+    // Helper: forward to another Netlify function
     const callFunction = async (fn, query) => {
       const url = `${BASE_URL}/${fn}?${query}`;
       console.log(`[Router] Forwarding to: ${url}`);
       const res = await fetch(url);
       const text = await res.text();
-      try {
-        return {
-          statusCode: res.status,
-          body: text || JSON.stringify({ message: 'Empty response from child function' }),
-        };
-      } catch {
-        return {
-          statusCode: 500,
-          body: JSON.stringify({ error: 'Failed to parse downstream response', text }),
-        };
-      }
+      return {
+        statusCode: res.status,
+        body: text || JSON.stringify({ message: "Empty downstream response" }),
+      };
     };
 
+    // ============================================================
+    // MAIN ROUTER SWITCH
+    // ============================================================
     switch (operation) {
-      // 🧠 Health / Validation
-      case 'health':
-        return await callFunction('health', '');
+      // ✅ HEALTH / DEFAULT (no operation or health/status)
+      case "":
+      case "health":
+      case "status":
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            status: "ok",
+            service: "router",
+            timestamp: new Date().toISOString(),
+            environment: {
+              node_version: process.version,
+              region: process.env.AWS_REGION || "us",
+            },
+          }),
+        };
 
-      case 'validateConfigs':
-      case 'validate_configs':
-        return await callFunction('validate_configs', '');
+      // 🏈 ROSTER OPERATIONS
+      case "getRosterStatus":
+      case "rosterStatus":
+        return await callFunction("roster-status", `sport=${sport}&force=${force}`);
 
-      // 🏈 Roster Operations
-      case 'getRosterStatus':
-      case 'rosterStatus':
-        return await callFunction('roster-status', `sport=${sport}&force=${force}`);
+      case "syncRoster":
+      case "rosterSync":
+        return await callFunction("roster-sync", `sport=${sport}`);
 
-      case 'syncRoster':
-      case 'rosterSync':
-      case 'roster-sync':
-        return await callFunction('roster-sync', `sport=${sport}`);
+      case "refreshRoster":
+      case "rosterRefresh":
+        return await callFunction("roster-refresh", `sport=${sport}`);
 
-      case 'refreshRoster':
-      case 'rosterRefresh':
-      case 'roster-refresh':
-        return await callFunction('roster-refresh', `sport=${sport}`);
-
-      // 🎯 Odds / Market Operations
-      case 'getOdds':
-      case 'odds':
+      // 🎯 ODDS / MARKET OPERATIONS
+      case "getOdds":
+      case "odds":
         return await callFunction(
-          'sportsDataproxy',
+          "sportsDataproxy",
           `operation=getOdds&sport=${sport}&regions=${regions}&markets=${markets}&bookmakers=${bookmakers}&oddsFormat=${oddsFormat}&dateFormat=${dateFormat}`
         );
 
-      // 🕒 Scheduler
-      case 'scheduler':
-        return await callFunction('scheduler', '');
+      // 🕒 SCHEDULER / VALIDATION
+      case "scheduler":
+        return await callFunction("scheduler", "");
 
-      // 🚨 Default
+      case "validate_configs":
+      case "validateConfigs":
+        return await callFunction("validate_configs", "");
+
+      // 🚨 DEFAULT / UNKNOWN OPERATION
       default:
         return {
           statusCode: 400,
           body: JSON.stringify({
-            error: 'Unknown or unsupported operation',
-            received: operation,
+            error: "Unknown or unsupported operation",
+            received_operation: operation,
             valid_operations: [
-              'health',
-              'validate_configs',
-              'getRosterStatus',
-              'syncRoster',
-              'refreshRoster',
-              'getOdds',
-              'scheduler',
+              "health",
+              "status",
+              "getRosterStatus",
+              "syncRoster",
+              "refreshRoster",
+              "getOdds",
+              "scheduler",
+              "validate_configs",
             ],
           }),
         };
     }
   } catch (err) {
-    console.error('[Router] Error:', err);
+    console.error("[Router] Error:", err);
     return {
       statusCode: 500,
       body: JSON.stringify({
-        error: 'Router internal error',
-        details: err.message || 'No error message',
+        error: "Router internal error",
+        details: err.message || "No error message",
       }),
     };
   }
