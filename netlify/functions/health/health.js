@@ -1,76 +1,81 @@
-import fetch from "node-fetch";
+/**
+ * ============================================================
+ * 🩺 SUPER-PIPELINE ORCHESTRATOR HEALTH MONITOR v3.2.4
+ * Aggregates live system health from primary & backup routers,
+ * API keys, and external data providers.
+ * ============================================================
+ */
 
-export default async () => {
+const PRIMARY = "https://super-pipeline-orchestrator.netlify.app/.netlify/functions";
+const BACKUP = "https://super-pipeline-orchestrator-backup.netlify.app/.netlify/functions";
+
+exports.handler = async () => {
   const start = Date.now();
-  const timestamp = new Date().toISOString();
-
-  const ODDS_API_KEY = process.env.ODDS_API_KEY;
-  const ROSTER_API_KEY = process.env.ROSTER_API_KEY;
-
-  const oddsPing = await testOddsAPI(ODDS_API_KEY);
-  const rosterPing = await testSportsDataIO(ROSTER_API_KEY);
-  const routerPing = await testRouterFunction();  // 🧠 new line
-
-  const allHealthy =
-    oddsPing === "ok" && rosterPing === "ok" && routerPing === "ok";
 
   const result = {
-    status: allHealthy ? "ok" : "degraded",
-    timestamp,
-    uptime_ms: Date.now() - start,
-    keys: {
-      odds_api_key: ODDS_API_KEY ? "present" : "missing",
-      roster_api_key: ROSTER_API_KEY ? "present" : "missing"
-    },
-    connectivity: {
-      odds_api: oddsPing,
-      sportsdata_io: rosterPing,
-      router_function: routerPing // 🧠 new entry
-    },
+    status: "degraded",
+    timestamp: new Date().toISOString(),
+    uptime_ms: 0,
+    keys: {},
+    connectivity: {},
     environment: {
       node_version: process.version,
-      region: process.env.REGION || "us"
-    }
+      region: process.env.AWS_REGION || "us",
+    },
   };
 
-  return new Response(JSON.stringify(result, null, 2), {
-    status: allHealthy ? 200 : 500,
-    headers: { "Content-Type": "application/json" }
-  });
+  try {
+    // ✅ 1️⃣ Check presence of env keys
+    result.keys.odds_api_key = process.env.ODDS_API_KEY ? "present" : "missing";
+    result.keys.roster_api_key = process.env.ROSTER_API_KEY ? "present" : "missing";
+
+    // ✅ 2️⃣ Check external API endpoints
+    const apiTests = {
+      odds_api: "https://api.the-odds-api.com/v4/sports",
+      sportsdata_io: "https://api.sportsdata.io/api/sports",
+    };
+
+    for (const [key, url] of Object.entries(apiTests)) {
+      try {
+        const res = await fetch(url, { method: "HEAD", timeout: 3000 });
+        result.connectivity[key] = res.ok ? "ok" : `fail (${res.status})`;
+      } catch {
+        result.connectivity[key] = "fail (timeout)";
+      }
+    }
+
+    // ✅ 3️⃣ Check primary router
+    try {
+      const res = await fetch(`${PRIMARY}/router?operation=health`, { timeout: 5000 });
+      result.connectivity.router_primary = res.ok ? "ok" : `fail (${res.status})`;
+    } catch {
+      result.connectivity.router_primary = "fail (timeout)";
+    }
+
+    // ✅ 4️⃣ Check backup router (optional redundancy)
+    try {
+      const res = await fetch(`${BACKUP}/router-backup?operation=health`, { timeout: 5000 });
+      result.connectivity.router_backup = res.ok ? "ok" : `fail (${res.status})`;
+    } catch {
+      result.connectivity.router_backup = "fail (timeout)";
+    }
+
+    // ✅ 5️⃣ Aggregate result
+    const allOk = Object.values(result.connectivity).every((v) => v.startsWith("ok"));
+    result.status = allOk ? "operational" : "degraded";
+    result.uptime_ms = Date.now() - start;
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(result, null, 2),
+    };
+  } catch (err) {
+    console.error("[Health] Fatal error:", err);
+    result.status = "fail";
+    result.error = err.message;
+    return {
+      statusCode: 500,
+      body: JSON.stringify(result, null, 2),
+    };
+  }
 };
-
-async function testOddsAPI(apiKey) {
-  try {
-    const res = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${apiKey}`, {
-      timeout: 4000
-    });
-    return res.ok ? "ok" : `fail (${res.status})`;
-  } catch (err) {
-    return `error (${err.message})`;
-  }
-}
-
-async function testSportsDataIO(apiKey) {
-  try {
-    const res = await fetch("https://api.sportsdata.io/v3/nfl/scores/json/Teams", {
-      headers: { "Ocp-Apim-Subscription-Key": apiKey },
-      timeout: 4000
-    });
-    return res.ok ? "ok" : `fail (${res.status})`;
-  } catch (err) {
-    return `error (${err.message})`;
-  }
-}
-
-// 🧠 NEW FUNCTION — checks your own orchestrator router
-async function testRouterFunction() {
-  try {
-    const res = await fetch(
-      "https://super-pipeline-orchestrator.netlify.app/.netlify/functions/router",
-      { timeout: 4000 }
-    );
-    return res.ok ? "ok" : `fail (${res.status})`;
-  } catch (err) {
-    return `error (${err.message})`;
-  }
-}
